@@ -8,7 +8,7 @@ img_width = 32
 img_ch = 3
 
 # tfr pipline setting
-PRELOAD_BUFFER_RATIO = 10
+PRELOAD_BUFFER_RATIO = 100
 
 # OHEM ratio
 OHEM_NUM_RATIO = 1.0
@@ -29,5 +29,5 @@ T_MUL = 2  # multi factor for every peroid
 
 
 # which model being for train
-MODEL_NAME = 'desnet'
+MODEL_NAME = 'desnetSeq'
 class_num = 10

@@ -154,6 +154,15 @@ def fully_connected(inputs, num_outputs, activation_fn=tf.nn.softmax, use_bias=T
                            trainable=trainable, name=name)
 
 
+def dense(inputs, num_outputs, activation_fn=tf.nn.softmax, use_bias=True, kernel_initializer=xavier_initializer(),
+          kernel_regularizer=l2_regularizer(), bias_regularizer=None,
+          trainable=True, name=None):
+    return tf.layers.dense(inputs, num_outputs, activation=activation_fn, use_bias=use_bias,
+                           kernel_initializer=kernel_initializer,
+                           kernel_regularizer=kernel_regularizer, bias_regularizer=bias_regularizer,
+                           trainable=trainable, name=name)
+
+
 def batch_normalization(inputs, training=True, name=None):
     return tf.layers.batch_normalization(inputs, training=training, name=name)
 
@@ -171,8 +180,18 @@ def concatenation(layer_list, axis=3):
     """
     return tf.concat(layer_list, axis=axis)
 
-# **************************
-# 关于使用Keras中的TimeDistributed，使用tensorflow,先reshape 一下，保留时间轴，然后使用dense执行分类（dense的输出结果和
-# 输入的维度一致（除了最后一维）
-#  ***************************
 
+def time_distributed(inputs, class_num, time_axis='w', name=None):
+    # **************************
+    # 关于使用Keras中的TimeDistributed，使用tensorflow,先reshape 一下，保留时间轴，然后使用dense执行分类（dense的输出结果和
+    # 输入的维度一致（除了最后一维）
+    #  ***************************
+    if time_axis == 'w':
+        inputs = tf.transpose(inputs, [0, 2, 1, 3])
+    # reshape
+    feature_shape = inputs.get_shape().as_list()
+    # print feature_shape[2]
+    dims = feature_shape[2] * feature_shape[3]
+    feature_map_reshaped = tf.reshape(inputs, [tf.shape(inputs)[0], tf.shape(inputs)[1], dims])
+    outputs = tf.layers.dense(feature_map_reshaped, class_num, name=name)
+    return outputs

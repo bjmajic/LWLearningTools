@@ -50,6 +50,8 @@ class Trainer(object):
             self.opt_type = args.opt_type
             self.show_detail_summary = args.show_detail_summary
             self.total_epochs = int(args.total_epochs)
+            if self.total_epochs == 0:
+                self.total_epochs = 1000000
 
             self.class_num = train_config.class_num
             # self.class_type = args.class_type

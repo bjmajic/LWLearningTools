@@ -48,6 +48,8 @@ class Trainer(object):
             self.opt_type = args.opt
             self.show_detail_summary = args.show_detail_summary
             self.total_epochs = int(args.epochs)
+            if self.total_epochs == 0:
+                self.total_epochs = 1000000
 
             self.class_type = args.class_type
             try:

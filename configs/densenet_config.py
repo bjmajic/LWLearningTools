@@ -4,7 +4,7 @@ filters = 24
 training = True
 
 class_num = 10
-dropout_rate = 0.2
+dropout_rate = 0.0  # 0.2
 
 
 

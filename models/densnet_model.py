@@ -1,6 +1,7 @@
 # coding=utf-8
 import layers
 import tensorflow as tf
+import numpy as np
 
 
 class Net(object):
@@ -11,6 +12,9 @@ class Net(object):
         self.model = None
         self.dropout = dropout_rate
         self.class_num = class_num
+
+        self.inputs = []
+        self.outputs = []
 
         # self.x = x
         # self.y = labels
@@ -94,4 +98,11 @@ class Net(object):
         correct_prediction = tf.equal(tf.argmax(logits, 1), tf.argmax(labels, 1))
         accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
         return cost, accuracy
+
+
+if __name__ == '__main__':
+    model = Net(24, True, 1000, 0.2)
+    input_x = tf.ones([1, 32, 320, 3], dtype=np.float32)
+    res = model.Dense_net(input_x)
+    print(res)
 
