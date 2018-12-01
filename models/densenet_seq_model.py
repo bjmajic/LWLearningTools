@@ -106,7 +106,7 @@ class Net(object):
         dims = feature_shape[2] * feature_shape[3]
         rnn_input = tf.reshape(rnn_input, [tf.shape(rnn_input)[0], tf.shape(rnn_input)[1], dims], name='rnn_input')
         sparse_label = self.dense_to_sparse(labels, tf.int64)
-        real_len = tf.add(tf.ceil(tf.cast(seq_len, dtype=tf.float32) / 4), -1)
+        real_len = tf.add(tf.floor(tf.cast(seq_len, dtype=tf.float32) / 8), -1)
         real_len = tf.cast(real_len, dtype=tf.int32, name='real_len')
 
         lstm_fw_cells = [
@@ -153,7 +153,31 @@ class Net(object):
             # return ctc_input, sparse_label, real_len
 
         with tf.variable_scope("ctc"):
-            return self.ctc_model(sparse_label, ctc_input, real_len)
+            prediction, error_rate, ctc_loss, neg_sum_logits = self.ctc_model(sparse_label, ctc_input, real_len)
+            return prediction, error_rate, ctc_loss, neg_sum_logits
+
+    def frozen_model(self, class_num):
+        self.training = False
+        with tf.variable_scope("input"):
+            image = tf.placeholder(dtype=tf.uint8, shape=(None, 32, None, 3),
+                                   name='image')
+            float_image = tf.cast(image, tf.float32, name='float_image')
+            norm_image = (float_image - 127.5) / 127.5
+            # sparse represent of label fot ctc loss
+            label_id = tf.placeholder(dtype=tf.int64, name='label_id')
+            label_value = tf.placeholder(dtype=tf.int32, name='label_value')
+            label_shape = tf.placeholder(dtype=tf.int64, name='label_shape')
+            seq_len = tf.placeholder(tf.int32, shape=(image.shape[0]), name='seq_len')
+        feed_dict = {'image': image, 'label_id': label_id, 'label_value': label_value, 'label_shape': label_shape,
+                     'seq_len': seq_len}
+        cnn_features = self.Dense_net(norm_image)
+
+        with tf.variable_scope('rnn'):
+            ctc_input, sparse_label, real_len = self.rnn_model(cnn_features, label_value, seq_len, class_num)
+            # return ctc_input, sparse_label, real_len
+
+        with tf.variable_scope("ctc"):
+            self.ctc_model(sparse_label, ctc_input, real_len)
 
 
 if __name__ == '__main__':

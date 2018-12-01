@@ -9,7 +9,7 @@ from configs import train_config
 from utils import util
 from data_create import create_parse_tfr
 from models import name_map_models
-from optimizer_tool import get_optimizer
+from trains.optimizer_tool import get_optimizer
 
 
 class Trainer(object):
@@ -44,10 +44,10 @@ class Trainer(object):
             else:
                 self.test_list_path = None
 
-            self.need_padded_batch = args.need_padded_patch
-            self.opt_type = args.opt
+            self.need_padded_batch = args.need_padded_batch
+            self.opt_type = args.opt_type
             self.show_detail_summary = args.show_detail_summary
-            self.total_epochs = int(args.epochs)
+            self.total_epochs = int(args.total_epochs)
             if self.total_epochs == 0:
                 self.total_epochs = 1000000
 
@@ -62,7 +62,7 @@ class Trainer(object):
             self.infer_model_path = args.infer_model_path
             self.gpu_id = args.gpu_id.split(',')
             self.model_type = args.model_type
-            self.model = name_map_models[args.model_type]
+            self.model = name_map_models.name2models_dict[args.model_type]
             self.print_config(args)
 
     def print_config(self, args):
@@ -137,9 +137,8 @@ class Trainer(object):
                 with tf.device('/gpu:%s' % d):
                     with tf.name_scope('%s_%s' % ('tower', d)):
                         prediction, error_rate, ctc_loss, _ = \
-                            self.model.build_model_tfr(self.class_num, image_splits[counter],
-                                                       label_splits[counter], len_splits[counter], self.batch_size,
-                                                       for_training=True)
+                            self.model.optimize_model(self.class_num, image_splits[counter],
+                                                      label_splits[counter], len_splits[counter])
                         counter += 1
                         with tf.variable_scope("ctc"):
                             grads = opt.compute_gradients(ctc_loss)
@@ -245,92 +244,94 @@ class Trainer(object):
         if tf.train.latest_checkpoint(self.checkpoint_dir) is not None:
             saver.restore(sess, tf.train.latest_checkpoint(self.checkpoint_dir))
 
-            # add some variables to summary
-            loss_summary = tf.summary.scalar('loss', self.layers['loss'])
-            error_summary = tf.summary.scalar('error_rate', self.layers['error_rate'])
-            lr_summary = tf.summary.scalar('learning_rate', self.layers['learning_rate'])
-            summaries = []
-            if self.show_detail_summary:
-                summaries = util.variable_summaries()
-            train_summaries = tf.summary.merge(summaries.extend([loss_summary, lr_summary, error_summary]))  # error_summary
+        # add some variables to summary
+        loss_summary = tf.summary.scalar('loss', self.layers['loss'])
+        error_summary = tf.summary.scalar('error_rate', self.layers['error_rate'])
+        lr_summary = tf.summary.scalar('learning_rate', self.layers['learning_rate'])
+        summaries = []
+        if self.show_detail_summary:
+            summaries = util.variable_summaries()
+        summaries.extend([loss_summary, lr_summary, error_summary])
+        train_summaries = tf.summary.merge(summaries)
+        #train_summaries = tf.summary.merge(summaries.extend([loss_summary, lr_summary, error_summary]))
 
-            train_file_writer = tf.summary.FileWriter(self.checkpoint_dir + '/train_log', sess.graph)
-            test_file_writer = tf.summary.FileWriter(self.checkpoint_dir + '/test_log', sess.graph)
+        train_file_writer = tf.summary.FileWriter(self.checkpoint_dir + '/train_log', sess.graph)
+        test_file_writer = tf.summary.FileWriter(self.checkpoint_dir + '/test_log', sess.graph)
 
-            if self.lr_type == 'naive':
-                curr_lr = train_config.INITIAL_LEARNING_RATE
-            elif self.lr_type == 'sgdr':
-                curr_lr = train_config.MAX_LR
-            else:
-                raise Exception('wrong lr type!')
+        if self.lr_type == 'naive':
+            curr_lr = train_config.INITIAL_LEARNING_RATE
+        elif self.lr_type == 'sgdr':
+            curr_lr = train_config.MAX_LR
+        else:
+            raise Exception('wrong lr type!')
 
-            sess.graph.finalize()  # 冻结图，防止训练中添加新的节点
-            for epoch in range(self.total_epochs):
-                start_time = time.time()
-                _, step, loss, error_rate, lr_rate, train_merged = sess.run([self.layers['optimizer'],
-                                                                             self.layers['global_step'],
-                                                                             self.layers['loss'],
-                                                                             self.layers['error_rate'],
-                                                                             self.layers['learning_rate'],
-                                                                             train_summaries],
-                                                                            feed_dict={
-                                                                                self.layers['handle']: training_handle,
-                                                                                self.layers['learning_rate']: curr_lr})
-                end_time = time.time()
-                # save model
-                if step % self.save_inter == 0:
-                    save_path = os.path.join(self.checkpoint_dir,
-                                             self.class_type + '-' + self.model_type + '-model.ckpt')
-                    saver.save(sess, save_path, global_step=step)
+        sess.graph.finalize()  # 冻结图，防止训练中添加新的节点
+        for epoch in range(self.total_epochs): # 这个地方有些问题，这样写step = total_epochs, 还有label的函数，最好再次重构一下结构
+            start_time = time.time()
+            _, step, loss, error_rate, lr_rate, train_merged = sess.run([self.layers['optimizer'],
+                                                                         self.layers['global_step'],
+                                                                         self.layers['loss'],
+                                                                         self.layers['error_rate'],
+                                                                         self.layers['learning_rate'],
+                                                                         train_summaries],
+                                                                        feed_dict={
+                                                                            self.layers['handle']: training_handle,
+                                                                            self.layers['learning_rate']: curr_lr})
+            end_time = time.time()
+            # save model
+            if step % self.save_inter == 0:
+                save_path = os.path.join(self.checkpoint_dir,
+                                         self.class_type + '-' + self.model_type + '-model.ckpt')
+                saver.save(sess, save_path, global_step=step)
 
-                # save training info for displaying
-                if step % self.disp_inter == 0:
-                    log_str = '[%s] %.3f sec/batch \t step:%d\t lr:%.6f \t loss:%.6f \t error rate:%.6f' % (
-                        datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        (end_time - start_time), step, lr_rate, loss, error_rate)
-                    tf.logging.info(log_str)
-                    train_file_writer.add_summary(train_merged, step)
+            # save training info for displaying
+            if step % self.disp_inter == 0:
+                log_str = '[%s] %.3f sec/batch \t step:%d\t lr:%.6f \t loss:%.6f \t error rate:%.6f' % (
+                    datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    (end_time - start_time), step, lr_rate, loss, error_rate)
+                tf.logging.info(log_str)
+                train_file_writer.add_summary(train_merged, step)
 
-                # test model using test data
-                if step % self.test_inter == 0:
-                    sess.run(self.layers['validation_iterator'].initializer)
-                    self.average_loss = 0.0
-                    average_error_rate = 0.0
-                    batch_num = 0
-                    while True:
-                        try:
-                            test_error_rate, test_loss = sess.run([
-                                self.layers['error_rate'],
-                                self.layers['loss']],
-                                feed_dict={self.layers['handle']: validation_handle})
-                            self.average_loss += test_loss
-                            average_error_rate += test_error_rate
-                            batch_num += 1
-                        except tf.errors.OutOfRangeError:
-                            break
+            # test model using test data
+            if step % self.test_inter == 0:
+                sess.run(self.layers['validation_iterator'].initializer)
+                self.average_loss = 0.0
+                average_error_rate = 0.0
+                batch_num = 0
+                while True:
+                    try:
+                        test_error_rate, test_loss = sess.run([
+                            self.layers['error_rate'],
+                            self.layers['loss']],
+                            feed_dict={self.layers['handle']: validation_handle})
+                        self.average_loss += test_loss
+                        average_error_rate += test_error_rate
+                        batch_num += 1
+                    except tf.errors.OutOfRangeError:
+                        break
 
-                    self.average_loss = self.average_loss / batch_num
-                    average_error_rate = average_error_rate / batch_num
-                    test_summaries = tf.Summary()
-                    loss_val = test_summaries.value.add()
-                    loss_val.tag = 'loss'
-                    loss_val.simple_value = self.average_loss
-                    acc_val = test_summaries.value.add()
-                    acc_val.tag = 'error_rate'
-                    acc_val.simple_value = average_error_rate
-                    test_file_writer.add_summary(test_summaries, step)
+                self.average_loss = self.average_loss / batch_num
+                average_error_rate = average_error_rate / batch_num
+                test_summaries = tf.Summary()
+                loss_val = test_summaries.value.add()
+                loss_val.tag = 'loss'
+                loss_val.simple_value = self.average_loss
+                acc_val = test_summaries.value.add()
+                acc_val.tag = 'error_rate'
+                acc_val.simple_value = average_error_rate
+                test_file_writer.add_summary(test_summaries, step)
 
-                    localtime = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    tf.logging.info('=' * 30)
-                    log_str = str(localtime) + '\t test loss:%.6f \t test error rate:%.6f' % (
-                        self.average_loss, average_error_rate)
-                    tf.logging.info(log_str)
-                    tf.logging.info('=' * 30)
+                localtime = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                tf.logging.info('=' * 30)
+                log_str = str(localtime) + '\t test loss:%.6f \t test error rate:%.6f' % (
+                    self.average_loss, average_error_rate)
+                tf.logging.info(log_str)
+                tf.logging.info('=' * 30)
 
-                # update lr
-                curr_lr = self.update_lr(curr_lr, step)
-                if curr_lr < 0:
-                    break
+            # update lr
+            curr_lr = self.update_lr(curr_lr, step)
+            if curr_lr < 0:
+                break
 
     # just a sample for infer
     def build_and_infer(self):
@@ -412,3 +413,42 @@ class Trainer(object):
         tf.logging.info('testing  error rate:%f' % average_error_rate)
         tf.logging.info('testing loss:%f' % total_loss)
         tf.logging.info('average_seq_acc:%f' % average_seq_acc)
+
+
+if __name__ == '__main__':
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--mode_flag', type=str, default='train', help='train or infer mode')
+    # some path
+    parser.add_argument('--train_list_path', type=str, default=None, help='train tfr file path')
+    parser.add_argument('--test_list_path', type=str, default=None, help='test tfr file path')
+    parser.add_argument('--ckpt_dir', type=str, default='models', help='checkpoint file dir')
+    parser.add_argument('--infer_model_path', type=str, default=None, help='model path under infer mode')
+    # some data related variables
+    parser.add_argument('--class_type', type=str, default='15', help='class set type:15,18,id,txt')
+    parser.add_argument('--batch_size', type=int, default=8, help='train batch size')
+    # some training related variables
+    parser.add_argument('--save_inter', type=int, default=10, help='save interval(batch num)')
+    parser.add_argument('--test_inter', type=int, default=10, help='test interval(batch num)')
+    parser.add_argument('--disp_inter', type=int, default=2, help='display in summary interval(batch num)')
+    parser.add_argument('--show_detail', type=str, default='False', help='show infer detail for every image')
+    parser.add_argument('--gpu_id', type=str, default='0', help='used gpu id,seperate by comma,ex:0,1,2')
+    parser.add_argument('--model_type', type=str, default='desnetSeq', help='model type, current support two:crnn, cnn')
+    parser.add_argument('--lr_type', type=str, default='sgdr', help='learning rate adjust strategy:naive,sgdr')
+
+    parser.add_argument('--need_padded_batch', type=int, default=1, help='need padded batch:0,1')
+    parser.add_argument('--opt_type', type=str, default='sgd', help='opt method')
+    parser.add_argument('--show_detail_summary', type=int, default=1, help='show detail summary:0,1')
+    parser.add_argument('--total_epochs', type=int, default=10, help='epochs')
+
+    args, unparsed = parser.parse_known_args()
+
+    trainer = Trainer(args)
+
+    if args.mode_flag == 'train':
+        trainer.build_for_train()
+    elif args.mode_flag == 'infer':
+        trainer.build_and_infer()
+    else:
+        raise Exception('wrong mode!')
